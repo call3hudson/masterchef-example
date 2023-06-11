@@ -12,74 +12,51 @@ contract MasterChef is Ownable {
   using SafeERC20 for ISushi;
   using SafeERC20 for ISushiLP;
 
-  // Refer to the information of individual liquidity provision
   struct StakingInfo {
-    // Amount of liquidity
     uint256 stakedAmount;
-    // Cumulated claimed reward
-    /* Tips: This is not the regular cumulative. See below */
     uint256 claimedAmount;
   }
 
-  // Refer to the address of Sushi token playing the role of reward as well as liquidity
+  struct PoolInfo {
+    ISushiLP lpToken;
+    uint256 lastRewardBlock;
+    uint256 sharePerToken;
+    uint256 allocPoint;
+  }
+
   ISushi public immutable sushi;
 
-  // Datasets of liquidity information of Sushi stakers
+  PoolInfo[] public poolInfo;
+
   mapping(address => StakingInfo) private stakers_;
+  mapping(uint => mapping(address => StakingInfo)) private lpstakers_;
 
-  // Datasets of liquidity information of SushiLP stakers
-  mapping(address => mapping(address => StakingInfo)) private lpstakers_;
+  uint256 public totalAllocPoint = 0;
 
-  // Determine how much reward Should be given to both sushi and sushiLP depositors
-  uint256 public constant REWARD = 1e19;
+  uint256 public sharePerSushiToken = 0;
+  uint256 public lastSushiRewardBlock;
 
-  // Determine the last index of number reward had already given
-  uint256 public lastBlockNumber;
-
-  // Determine the amounts of deposits of both sushi and sushiLP
-  uint256 public totalDeposited;
-  uint256 public totalLPDeposited;
-
-  // Determine the allocation point between sushi and sushiLP
-  // Should be smaller than 255 so neither side is zero profited
   uint8 public alloc2sushi;
 
-  // Reward cumulatives
-  /*
-    Tips: This is not the historic cumulatives
-      If a new staker stakes his or her liquidity here, the cumulated reward Should be
-        * `depositor.claimedAmount = cumulatedReward_ * amount / totalDeposited`
-        * `cumulatedReward_ = cumulatedReward_ * (totalDeposited + amount) / totalDeposited`
-      If stakers withdraw their liquidity, we need to update both claimedAmount and cumulatedReward_
-        * `depositor.claimedAmount = depositor.claimedAmount * (depositor.stakedAmount - amount) / depositor.stakedAmount`
-        * `depositor.claimedAmount -= amount`
-        * `cumulatedReward_ = cumulatedReward * (totalDeposited - amount) / totalDeposited`
-        * `totalDeposited = totalDeposited - amount`
-      If stakers claim their reward
-        * `reward = cumulatedReward_ * amount / totalDeposited - depositor.claimedAmount`
-        * `depositor.claimedAmount = depositor.claimedAmount + reward`
-      The reward Should be given individually so we just sum up with `cumulatedReward_`
-        * `cumulatedReward_ = cumulatedReward_ + (blockPassed * 10)
-  */
-  uint256 private cumulatedReward_;
-  uint256 private cumulatedLPReward_;
+  uint256 public constant REWARD = 1e19;
 
   event Deposited(address indexed sender, uint amountDeposited, uint depositedTotal);
   event LPDeposited(
     address indexed sender,
-    address indexed tokenId,
+    uint indexed tokenId,
     uint amountDeposited,
     uint depositedTotal
   );
   event Withdrawn(address indexed sender, uint amountWithdrawn, uint remainingAmount);
   event LPWithdrawn(
     address indexed sender,
-    address indexed tokenId,
+    uint indexed tokenId,
     uint amountWithdrawn,
     uint remainingAmount
   );
   event Claimed(address indexed sender, uint amountClaimed);
-  event LPClaimed(address indexed sender, address indexed tokenId, uint amountClaimed);
+  event LPClaimed(address indexed sender, uint indexed tokenId, uint amountClaimed);
+  event PoolAdded(address indexed token, uint indexed tokenId, uint allocPoint);
   event AllocPointModified(uint8 prev, uint8 modified);
 
   modifier greaterThanZero(uint256 value) {
@@ -92,197 +69,225 @@ contract MasterChef is Ownable {
     alloc2sushi = alloc2sushi_;
   }
 
-  // Deposit Sushi token
   function deposit(uint256 tokenAmount) external greaterThanZero(tokenAmount) {
-    // Check for the block reward
-    _mint();
+    _mintSushi();
 
     sushi.transferFrom(msg.sender, address(this), tokenAmount);
 
-    // Handler to the dataset
     StakingInfo storage depositor = stakers_[msg.sender];
 
-    // If this is the first time of staking, then modify storage values and cumulatedReward_ as well
     if (depositor.stakedAmount == 0) {
       depositor.stakedAmount = tokenAmount;
-      // We need to set claimedAmount even though it is being created since for the further distribution
-      if (totalDeposited > 0)
-        depositor.claimedAmount = (cumulatedReward_ * tokenAmount) / totalDeposited;
-      cumulatedReward_ += depositor.claimedAmount;
+      depositor.claimedAmount = (sharePerSushiToken * tokenAmount) / 1e12;
     } else {
-      // Claim everytime when the user calls any apis
       _claim(msg.sender);
       depositor.stakedAmount += tokenAmount;
     }
 
-    // Update totalDeposited value
-    totalDeposited += tokenAmount;
-
-    // Since it's the user interaction, we need to notify it
     emit Deposited(msg.sender, tokenAmount, depositor.stakedAmount);
   }
 
-  // Deposit Sushi LP token: Same logic but little difference with LPs
-  function depositLP(ISushiLP lpToken, uint256 tokenAmount) external greaterThanZero(tokenAmount) {
-    _mint();
+  function depositLP(
+    uint256 lpTokenId_,
+    uint256 tokenAmount
+  ) external greaterThanZero(tokenAmount) {
+    _mintPool(lpTokenId_);
 
-    lpToken.transferFrom(msg.sender, address(this), tokenAmount);
+    PoolInfo storage pool = poolInfo[lpTokenId_];
 
-    StakingInfo storage depositor = lpstakers_[address(lpToken)][msg.sender];
+    pool.lpToken.transferFrom(msg.sender, address(this), tokenAmount);
+
+    StakingInfo storage depositor = lpstakers_[lpTokenId_][msg.sender];
 
     if (depositor.stakedAmount == 0) {
       depositor.stakedAmount = tokenAmount;
-      if (totalLPDeposited > 0)
-        depositor.claimedAmount = (cumulatedLPReward_ * tokenAmount) / totalLPDeposited;
-      cumulatedLPReward_ += depositor.claimedAmount;
+      depositor.claimedAmount = (pool.sharePerToken * tokenAmount) / 1e12;
     } else {
-      _claimLP(msg.sender, lpToken);
+      _claimLP(msg.sender, lpTokenId_);
       depositor.stakedAmount += tokenAmount;
     }
 
-    totalLPDeposited += tokenAmount;
-
-    emit LPDeposited(msg.sender, address(lpToken), tokenAmount, depositor.stakedAmount);
+    emit LPDeposited(msg.sender, lpTokenId_, tokenAmount, depositor.stakedAmount);
   }
 
-  // Withdraw Sushi Token
   function withdraw(uint256 tokenAmount) external greaterThanZero(tokenAmount) {
     require(stakers_[msg.sender].stakedAmount >= tokenAmount, 'Withdraw: Not enough Sushi');
 
-    // Check for the block reward
-    _mint();
-
-    // Claim everytime when the user calls any apis
+    _mintSushi();
     _claim(msg.sender);
 
-    // Handler to the dataset
     StakingInfo storage depositor = stakers_[msg.sender];
-
-    // Of all the cases, we need to update the amountClaimed value since we don't need to subtract
-    // the claimed amount of withdrawn tokens that doesn't give any reward
-    depositor.claimedAmount =
-      (depositor.claimedAmount * (depositor.stakedAmount - tokenAmount)) /
-      depositor.stakedAmount;
     depositor.stakedAmount -= tokenAmount;
+    depositor.claimedAmount = (sharePerSushiToken * depositor.stakedAmount) / 1e12;
 
-    // Update both cumulatedReward and totalDeposited for accurate distribution of reward
-    cumulatedReward_ = (cumulatedReward_ * (totalDeposited - tokenAmount)) / totalDeposited;
-    totalDeposited -= tokenAmount;
-
-    // Finally, returning withdrawn token
     sushi.transfer(msg.sender, tokenAmount);
 
-    // Since it's the user interaction, we need to notify it
     emit Withdrawn(msg.sender, tokenAmount, depositor.stakedAmount);
   }
 
-  // Withdraw SushiLP Token: Same logic but little difference with LPs
-  function withdrawLP(ISushiLP lpToken, uint256 tokenAmount) external greaterThanZero(tokenAmount) {
+  function withdrawLP(
+    uint256 lpTokenId_,
+    uint256 tokenAmount
+  ) external greaterThanZero(tokenAmount) {
     require(
-      lpstakers_[address(lpToken)][msg.sender].stakedAmount >= tokenAmount,
+      lpstakers_[lpTokenId_][msg.sender].stakedAmount >= tokenAmount,
       'WithdrawLP: Not enough SushiLP'
     );
-    _mint();
-    _claimLP(msg.sender, lpToken);
 
-    StakingInfo storage depositor = lpstakers_[address(lpToken)][msg.sender];
-    depositor.claimedAmount =
-      (depositor.claimedAmount * (depositor.stakedAmount - tokenAmount)) /
-      depositor.stakedAmount;
+    _mintPool(lpTokenId_);
+    _claimLP(msg.sender, lpTokenId_);
+
+    PoolInfo storage pool = poolInfo[lpTokenId_];
+
+    StakingInfo storage depositor = lpstakers_[lpTokenId_][msg.sender];
     depositor.stakedAmount -= tokenAmount;
+    depositor.claimedAmount = (pool.sharePerToken * depositor.stakedAmount) / 1e12;
 
-    cumulatedLPReward_ = (cumulatedLPReward_ * (totalLPDeposited - tokenAmount)) / totalLPDeposited;
-    totalLPDeposited -= tokenAmount;
+    pool.lpToken.transfer(msg.sender, tokenAmount);
 
-    lpToken.transfer(msg.sender, tokenAmount);
-    emit LPWithdrawn(msg.sender, address(lpToken), tokenAmount, depositor.stakedAmount);
+    emit LPWithdrawn(msg.sender, lpTokenId_, tokenAmount, depositor.stakedAmount);
   }
 
-  // Define external api for the internal claim function
   function claim() external {
-    // Check for the block reward
-    _mint();
-
+    _mintSushi();
     uint256 claimedAmount = _claim(msg.sender);
 
-    // Since it's the user interaction, we need to notify it
     emit Claimed(msg.sender, claimedAmount);
   }
 
-  function claimLP(ISushiLP lpToken) external {
-    _mint();
+  function claimLP(uint256 lpTokenId_) external {
+    _mintPool(lpTokenId_);
+    uint256 claimedAmount = _claimLP(msg.sender, lpTokenId_);
 
-    uint256 claimedAmount = _claimLP(msg.sender, lpToken);
-
-    emit LPClaimed(msg.sender, address(lpToken), claimedAmount);
+    emit LPClaimed(msg.sender, lpTokenId_, claimedAmount);
   }
 
-  // Set allocation point between group of Sushi stakers and LP stakers
-  // Can only be done by the owner or governance
+  function pendingSushi() external view returns (uint256) {
+    StakingInfo storage info = stakers_[msg.sender];
+
+    uint256 allocPoint = uint256(alloc2sushi);
+    if (poolInfo.length == 0) allocPoint = 256;
+
+    uint256 accumulated = ((block.number - lastSushiRewardBlock) *
+      REWARD *
+      allocPoint *
+      info.stakedAmount) / (256 * sushi.balanceOf(address(this)));
+
+    return accumulated;
+  }
+
+  function pendingSushiLP(uint256 lpTokenId_) external view returns (uint256) {
+    PoolInfo storage pool = poolInfo[lpTokenId_];
+    StakingInfo storage info = lpstakers_[lpTokenId_][msg.sender];
+
+    uint256 allocPoint = (256 - uint256(alloc2sushi));
+    if (sushi.balanceOf(address(this)) == 0) allocPoint = 256;
+
+    uint256 accumulated = ((block.number - pool.lastRewardBlock) *
+      REWARD *
+      allocPoint *
+      pool.allocPoint *
+      info.stakedAmount) / (256 * totalAllocPoint * pool.lpToken.balanceOf(address(this)));
+
+    return accumulated;
+  }
+
+  function addPool(ISushiLP lpToken_, uint256 allocPoint_) external onlyOwner {
+    _mint();
+    totalAllocPoint += allocPoint_;
+
+    uint256 tokenId = poolInfo.length;
+
+    poolInfo.push(
+      PoolInfo({
+        lpToken: lpToken_,
+        lastRewardBlock: block.number,
+        sharePerToken: 0,
+        allocPoint: allocPoint_
+      })
+    );
+
+    emit PoolAdded(address(lpToken_), tokenId, poolInfo[tokenId].allocPoint);
+  }
+
   function setAllocationPoint(uint8 alloc2sushi_) external onlyOwner {
     _mint();
 
     uint8 prev = alloc2sushi;
     alloc2sushi = alloc2sushi_;
 
-    // Since it's the user interaction, we need to notify it
     emit AllocPointModified(prev, alloc2sushi);
   }
 
-  // Claim accumulated reward Sushi stakers
-  function _claim(address claimer) internal returns (uint256) {
-    // Handler to the dataset
-    StakingInfo storage info = stakers_[claimer];
+  function _claim(address claimer_) internal returns (uint256) {
+    StakingInfo storage info = stakers_[claimer_];
 
-    // If nothing was deposited, just end
-    // This can prevent the `division by zero` fault caused by `totalDeposited = 0`
     if (info.stakedAmount == 0) return 0;
 
-    // Calculate reward distribution according to the staked amount
-    uint256 rewardDistributed = (cumulatedReward_ * info.stakedAmount) /
-      totalDeposited -
+    uint256 rewardDistributed = ((sharePerSushiToken * info.stakedAmount) / 1e12) -
       info.claimedAmount;
     info.claimedAmount = info.claimedAmount + rewardDistributed;
 
-    sushi.mint(claimer, rewardDistributed);
+    sushi.mint(claimer_, rewardDistributed);
 
     return rewardDistributed;
   }
 
-  // Claim accumulated reward for LP stakers: Same logic but little difference with LPs
-  function _claimLP(address claimer, ISushiLP lpToken) internal returns (uint256) {
-    StakingInfo storage info = lpstakers_[address(lpToken)][claimer];
+  function _claimLP(address claimer_, uint256 lpTokenId_) internal returns (uint256) {
+    PoolInfo storage pool = poolInfo[lpTokenId_];
+    StakingInfo storage info = lpstakers_[lpTokenId_][claimer_];
 
     if (info.stakedAmount == 0) return 0;
 
-    uint256 rewardDistributed = (cumulatedLPReward_ * info.stakedAmount) /
-      totalLPDeposited -
+    uint256 rewardDistributed = ((pool.sharePerToken * info.stakedAmount) / 1e12) -
       info.claimedAmount;
     info.claimedAmount = info.claimedAmount + rewardDistributed;
 
-    sushi.mint(claimer, rewardDistributed);
+    sushi.mint(claimer_, rewardDistributed);
 
     return rewardDistributed;
   }
 
-  // Mint accumulated token
-  function _mint() internal returns (uint256, uint256) {
-    // Calculate the reward amount of sushi
-    uint256 accumulated = (block.number - lastBlockNumber) * REWARD;
-    lastBlockNumber = block.number;
+  function _mint() internal {
+    uint256 length = poolInfo.length;
+    for (uint256 id = 0; id < length; ++id) {
+      _mintPool(id);
+    }
+    _mintSushi();
+  }
 
-    if (totalDeposited == 0 && totalLPDeposited == 0) return (uint256(0), uint256(0));
-    // If either one side is without liquidity, we do not need to distribute it
-    uint256 rate = uint256(alloc2sushi);
-    if (totalDeposited == 0) rate = 0;
-    if (totalLPDeposited == 0) rate = uint256(256);
+  function _mintSushi() internal {
+    if (sushi.balanceOf(address(this)) == 0) {
+      lastSushiRewardBlock = block.number;
+      return;
+    }
 
-    uint256 rewardSushi = (accumulated * rate) / uint256(256);
-    uint256 rewardLP = accumulated - rewardSushi;
+    uint256 allocPoint = uint256(alloc2sushi);
+    if (poolInfo.length == 0) allocPoint = 256;
 
-    cumulatedReward_ = cumulatedReward_ + rewardSushi;
-    cumulatedLPReward_ = cumulatedLPReward_ + rewardLP;
+    uint256 accumulated = ((block.number - lastSushiRewardBlock) * REWARD * allocPoint) / 256;
 
-    return (rewardSushi, rewardLP);
+    lastSushiRewardBlock = block.number;
+    sharePerSushiToken += (accumulated * 1e12) / sushi.balanceOf(address(this));
+  }
+
+  function _mintPool(uint256 lpTokenId_) internal {
+    PoolInfo storage pool = poolInfo[lpTokenId_];
+
+    if (pool.lpToken.balanceOf(address(this)) == 0) {
+      pool.lastRewardBlock = block.number;
+      return;
+    }
+
+    uint256 allocPoint = (256 - uint256(alloc2sushi));
+    if (sushi.balanceOf(address(this)) == 0) allocPoint = 256;
+
+    uint256 accumulated = ((block.number - pool.lastRewardBlock) *
+      REWARD *
+      allocPoint *
+      pool.allocPoint) / (256 * totalAllocPoint);
+
+    pool.lastRewardBlock = block.number;
+    pool.sharePerToken += (accumulated * 1e12) / pool.lpToken.balanceOf(address(this));
   }
 }

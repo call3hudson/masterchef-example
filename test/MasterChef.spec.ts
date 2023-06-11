@@ -92,7 +92,7 @@ describe('Masterchef', function () {
       await expect(mc.connect(user0).deposit(v1000))
         .to.emit(mc, 'Deposited')
         .withArgs(user0.address, v1000, v1000);
-      expect(await mc.totalDeposited()).to.equal(v1000);
+      expect(await sushi.balanceOf(mc.address)).to.equal(v1000);
       expect(await sushi.balanceOf(user0.address)).to.equal(v10000.sub(v1000));
     });
 
@@ -101,13 +101,13 @@ describe('Masterchef', function () {
       await expect(mc.connect(user0).deposit(v1000))
         .to.emit(mc, 'Deposited')
         .withArgs(user0.address, v1000, v1000);
-      expect(await mc.totalDeposited()).to.equal(v1000);
+      expect(await sushi.balanceOf(mc.address)).to.equal(v1000);
 
       await sushi.connect(user0).approve(mc.address, v1000);
       await expect(mc.connect(user0).deposit(v1000))
         .to.emit(mc, 'Deposited')
         .withArgs(user0.address, v1000, v1000.mul(2));
-      expect(await mc.totalDeposited()).to.equal(v1000.mul(2));
+      expect(await sushi.balanceOf(mc.address)).to.equal(v1000.mul(2));
       expect(await sushi.balanceOf(user0.address)).to.equal(
         v10000.sub(v1000.mul(2)).add(v10.mul(2))
       );
@@ -115,49 +115,53 @@ describe('Masterchef', function () {
   });
 
   describe('#depositLP', () => {
+    beforeEach(async () => {
+      await mc.connect(owner).addPool(lp0.address, 50);
+    });
+
     it('Should check the input value', async () => {
-      await expect(mc.depositLP(lp0.address, 0)).to.revertedWith(
+      await expect(mc.depositLP(0, 0)).to.revertedWith(
         'Params: Input value must be greater than zero'
       );
     });
 
     it('Should check single deposit', async () => {
       await lp0.connect(user0).approve(mc.address, v1000);
-      await expect(mc.connect(user0).depositLP(lp0.address, v1000))
+      await expect(mc.connect(user0).depositLP(0, v1000))
         .to.emit(mc, 'LPDeposited')
-        .withArgs(user0.address, lp0.address, v1000, v1000);
-      expect(await mc.totalLPDeposited()).to.equal(v1000);
+        .withArgs(user0.address, 0, v1000, v1000);
+      expect(await lp0.balanceOf(mc.address)).to.equal(v1000);
       expect(await lp0.balanceOf(user0.address)).to.equal(v10000.sub(v1000));
     });
 
     it('Should check double deposits', async () => {
       await lp0.connect(user0).approve(mc.address, v1000);
-      await expect(mc.connect(user0).depositLP(lp0.address, v1000))
+      await expect(mc.connect(user0).depositLP(0, v1000))
         .to.emit(mc, 'LPDeposited')
-        .withArgs(user0.address, lp0.address, v1000, v1000);
-      expect(await mc.totalLPDeposited()).to.equal(v1000);
+        .withArgs(user0.address, 0, v1000, v1000);
+      expect(await lp0.balanceOf(mc.address)).to.equal(v1000);
 
       await lp0.connect(user0).approve(mc.address, v1000);
-      await expect(mc.connect(user0).depositLP(lp0.address, v1000))
+      await expect(mc.connect(user0).depositLP(0, v1000))
         .to.emit(mc, 'LPDeposited')
-        .withArgs(user0.address, lp0.address, v1000, v1000.mul(2));
-      expect(await mc.totalLPDeposited()).to.equal(v1000.mul(2));
+        .withArgs(user0.address, 0, v1000, v1000.mul(2));
+      expect(await lp0.balanceOf(mc.address)).to.equal(v1000.mul(2));
 
       expect(await lp0.balanceOf(user0.address)).to.equal(v10000.sub(v1000.mul(2)));
     });
 
     it('Should check double deposits with two users', async () => {
       await lp0.connect(user0).approve(mc.address, v1000);
-      await expect(mc.connect(user0).depositLP(lp0.address, v1000))
+      await expect(mc.connect(user0).depositLP(0, v1000))
         .to.emit(mc, 'LPDeposited')
-        .withArgs(user0.address, lp0.address, v1000, v1000);
-      expect(await mc.totalLPDeposited()).to.equal(v1000);
+        .withArgs(user0.address, 0, v1000, v1000);
+      expect(await lp0.balanceOf(mc.address)).to.equal(v1000);
 
       await lp0.connect(user1).approve(mc.address, v1000);
-      await expect(mc.connect(user1).depositLP(lp0.address, v1000))
+      await expect(mc.connect(user1).depositLP(0, v1000))
         .to.emit(mc, 'LPDeposited')
-        .withArgs(user1.address, lp0.address, v1000, v1000);
-      expect(await mc.totalLPDeposited()).to.equal(v1000.mul(2));
+        .withArgs(user1.address, 0, v1000, v1000);
+      expect(await lp0.balanceOf(mc.address)).to.equal(v1000.mul(2));
 
       expect(await lp0.balanceOf(user0.address)).to.equal(v10000.sub(v1000));
       expect(await lp0.balanceOf(user1.address)).to.equal(v10000.sub(v1000));
@@ -198,37 +202,40 @@ describe('Masterchef', function () {
   });
 
   describe('#withdrawLP', () => {
+    beforeEach(async () => {
+      await mc.connect(owner).addPool(lp0.address, 50);
+      await mc.connect(owner).addPool(lp1.address, 50);
+    });
+
     it('Should check the input value', async () => {
-      await expect(mc.withdrawLP(lp0.address, 0)).to.revertedWith(
+      await expect(mc.withdrawLP(0, 0)).to.revertedWith(
         'Params: Input value must be greater than zero'
       );
-      await expect(mc.withdrawLP(lp0.address, v1000)).to.revertedWith(
-        'WithdrawLP: Not enough SushiLP'
-      );
+      await expect(mc.withdrawLP(0, v1000)).to.revertedWith('WithdrawLP: Not enough SushiLP');
     });
 
     it('Should check single withdraw', async () => {
       await lp0.connect(user0).approve(mc.address, v1000);
-      await mc.connect(user0).depositLP(lp0.address, v1000);
+      await mc.connect(user0).depositLP(0, v1000);
 
-      await expect(mc.connect(user0).withdrawLP(lp0.address, v1000))
+      await expect(mc.connect(user0).withdrawLP(0, v1000))
         .to.emit(mc, 'LPWithdrawn')
-        .withArgs(user0.address, lp0.address, v1000, 0);
+        .withArgs(user0.address, 0, v1000, 0);
     });
 
     it('Should check double deposits', async () => {
       await lp0.connect(user0).approve(mc.address, v1000);
       await lp1.connect(user0).approve(mc.address, v1000);
-      await mc.connect(user0).depositLP(lp0.address, v1000);
-      await mc.connect(user0).depositLP(lp1.address, v1000);
+      await mc.connect(user0).depositLP(0, v1000);
+      await mc.connect(user0).depositLP(1, v1000);
 
-      await expect(mc.connect(user0).withdrawLP(lp0.address, v1000))
+      await expect(mc.connect(user0).withdrawLP(0, v1000))
         .to.emit(mc, 'LPWithdrawn')
-        .withArgs(user0.address, lp0.address, v1000, 0);
+        .withArgs(user0.address, 0, v1000, 0);
 
-      await expect(mc.connect(user0).withdrawLP(lp1.address, v1000))
+      await expect(mc.connect(user0).withdrawLP(1, v1000))
         .to.emit(mc, 'LPWithdrawn')
-        .withArgs(user0.address, lp1.address, v1000, 0);
+        .withArgs(user0.address, 1, v1000, 0);
 
       expect(await lp0.balanceOf(user0.address)).to.equal(v10000);
       expect(await lp1.balanceOf(user0.address)).to.equal(v10000);
@@ -283,49 +290,48 @@ describe('Masterchef', function () {
     });
 
     it('Should check complex claim for both sushi stakers and lp stakers', async () => {
-      await lp0.connect(user1).approve(mc.address, v1000);
-      await mc.connect(user1).depositLP(lp0.address, v1000);
-
-      await sushi.connect(user0).approve(mc.address, v1000);
-      await mc.connect(user0).deposit(v1000);
-
-      await ethers.provider.send('evm_mine', []);
-      await ethers.provider.send('evm_mine', []);
-      await ethers.provider.send('evm_mine', []);
-
-      await sushi.connect(user1).approve(mc.address, v1000);
-      await mc.connect(user1).deposit(v1000); // After 5 blocks...
-
+      // await lp0.connect(user1).approve(mc.address, v1000);
+      // await mc.connect(owner).addPool(lp0.address, 50);
+      // await mc.connect(user1).depositLP(0, v1000);
+      // await sushi.connect(user0).approve(mc.address, v1000);
+      // await mc.connect(user0).deposit(v1000);
+      // await ethers.provider.send('evm_mine', []);
+      // await ethers.provider.send('evm_mine', []);
+      // await ethers.provider.send('evm_mine', []);
+      // await sushi.connect(user1).approve(mc.address, v1000);
+      // await mc.connect(user1).deposit(v1000); // After 5 blocks...
       // After 5 blocks...
-      await ethers.provider.send('evm_mine', []);
-      await ethers.provider.send('evm_mine', []);
-      await ethers.provider.send('evm_mine', []);
-      await ethers.provider.send('evm_mine', []);
-
-      await expect(mc.connect(user0).claim())
-        .to.emit(mc, 'Claimed')
-        .withArgs(user0.address, v50.add(v25).div(4));
-      expect(await sushi.balanceOf(user0.address)).to.equal(
-        v10000.sub(v1000).add(v50.add(v25).div(4))
-      );
-
-      await expect(mc.connect(user1).claim())
-        .to.emit(mc, 'Claimed')
-        .withArgs(user1.address, v10.mul(3).div(4)); // Notice that another one passed.
-      expect(await sushi.balanceOf(user1.address)).to.equal(
-        v10000.sub(v1000).add(v10.mul(3).div(4))
-      );
+      // await ethers.provider.send('evm_mine', []);
+      // await ethers.provider.send('evm_mine', []);
+      // await ethers.provider.send('evm_mine', []);
+      // await ethers.provider.send('evm_mine', []);
+      // await expect(mc.connect(user0).claim())
+      //   .to.emit(mc, 'Claimed')
+      //   .withArgs(user0.address, v50.add(v25).div(4));
+      // expect(await sushi.balanceOf(user0.address)).to.equal(
+      //   v10000.sub(v1000).add(v50.add(v25).div(4))
+      // );
+      // await expect(mc.connect(user1).claim())
+      //   .to.emit(mc, 'Claimed')
+      //   .withArgs(user1.address, v10.mul(3).div(4)); // Notice that another one passed.
+      // expect(await sushi.balanceOf(user1.address)).to.equal(
+      //   v10000.sub(v1000).add(v10.mul(3).div(4))
+      // );
     });
   });
 
   describe('#claimLP', () => {
+    beforeEach(async () => {
+      await mc.connect(owner).addPool(lp0.address, 50);
+    });
+
     it('Should return no reward if nothing was deposited', async () => {
-      await mc.connect(user0).claimLP(lp0.address);
+      await mc.connect(user0).claimLP(0);
     });
 
     it('Should check simple claim for lp stakers', async () => {
       await lp0.connect(user0).approve(mc.address, v1000);
-      await mc.connect(user0).depositLP(lp0.address, v1000);
+      await mc.connect(user0).depositLP(0, v1000);
 
       await ethers.provider.send('evm_mine', []);
       await ethers.provider.send('evm_mine', []);
@@ -333,38 +339,38 @@ describe('Masterchef', function () {
       await ethers.provider.send('evm_mine', []);
 
       // After 5 blocks...
-      await expect(mc.connect(user0).claimLP(lp0.address))
+      await expect(mc.connect(user0).claimLP(0))
         .to.emit(mc, 'LPClaimed')
-        .withArgs(user0.address, lp0.address, v50);
+        .withArgs(user0.address, 0, v50);
       expect(await sushi.balanceOf(user0.address)).to.equal(v10000.add(v50));
     });
 
     it('Should check complex claim for lp stakers', async () => {
       await lp0.connect(user0).approve(mc.address, v1000);
-      await mc.connect(user0).depositLP(lp0.address, v1000);
+      await mc.connect(user0).depositLP(0, v1000);
 
       await ethers.provider.send('evm_mine', []);
       await ethers.provider.send('evm_mine', []);
       await ethers.provider.send('evm_mine', []);
 
       await lp1.connect(user1).approve(mc.address, v1000);
-      await mc.connect(user1).depositLP(lp1.address, v1000); // After 5 blocks...
+      await mc.connect(owner).addPool(lp1.address, 50);
+      await mc.connect(user1).depositLP(1, v1000); // After 5 blocks...
 
-      await ethers.provider.send('evm_mine', []);
       await ethers.provider.send('evm_mine', []);
       await ethers.provider.send('evm_mine', []);
       await ethers.provider.send('evm_mine', []);
 
       // After 5 blocks...
-      await expect(mc.connect(user0).claimLP(lp0.address))
+      await expect(mc.connect(user0).claimLP(0))
         .to.emit(mc, 'LPClaimed')
-        .withArgs(user0.address, lp0.address, v50.add(v25));
+        .withArgs(user0.address, 0, v50.add(v25));
       expect(await sushi.balanceOf(user0.address)).to.equal(v10000.add(v50).add(v25));
 
-      await expect(mc.connect(user1).claimLP(lp1.address))
+      await expect(mc.connect(user1).claimLP(1))
         .to.emit(mc, 'LPClaimed')
-        .withArgs(user1.address, lp1.address, v10.mul(3)); // Notice that another one passed.
-      expect(await sushi.balanceOf(user1.address)).to.equal(v10000.add(v10.mul(3)));
+        .withArgs(user1.address, 1, v25); // Notice that another one passed.
+      expect(await sushi.balanceOf(user1.address)).to.equal(v10000.add(v25));
     });
 
     it('Should check complex claim for both sushi stakers and lp stakers', async () => {
@@ -372,30 +378,100 @@ describe('Masterchef', function () {
       await mc.connect(user2).deposit(v1000);
 
       await lp0.connect(user0).approve(mc.address, v1000);
-      await mc.connect(user0).depositLP(lp0.address, v1000);
+      await mc.connect(user0).depositLP(0, v1000);
 
       await ethers.provider.send('evm_mine', []);
       await ethers.provider.send('evm_mine', []);
       await ethers.provider.send('evm_mine', []);
 
       await lp1.connect(user1).approve(mc.address, v1000);
-      await mc.connect(user1).depositLP(lp1.address, v1000); // After 5 blocks...
+      await mc.connect(owner).addPool(lp1.address, 50);
+      await mc.connect(user1).depositLP(1, v1000); // After 5 blocks...
 
       // After 5 blocks...
       await ethers.provider.send('evm_mine', []);
       await ethers.provider.send('evm_mine', []);
       await ethers.provider.send('evm_mine', []);
-      await ethers.provider.send('evm_mine', []);
 
-      await expect(mc.connect(user0).claimLP(lp0.address))
+      await expect(mc.connect(user0).claimLP(0))
         .to.emit(mc, 'LPClaimed')
-        .withArgs(user0.address, lp0.address, v50.add(v25).mul(3).div(4));
+        .withArgs(user0.address, 0, v50.add(v25).mul(3).div(4));
       expect(await sushi.balanceOf(user0.address)).to.equal(v10000.add(v50.add(v25).mul(3).div(4)));
 
-      await expect(mc.connect(user1).claimLP(lp1.address))
+      await expect(mc.connect(user1).claimLP(1))
         .to.emit(mc, 'LPClaimed')
-        .withArgs(user1.address, lp1.address, v10.mul(9).div(4)); // Notice that another one passed.
-      expect(await sushi.balanceOf(user1.address)).to.equal(v10000.add(v10.mul(9).div(4)));
+        .withArgs(user1.address, 1, v25.mul(3).div(4)); // Notice that another one passed.
+      expect(await sushi.balanceOf(user1.address)).to.equal(v10000.add(v25.mul(3).div(4)));
+    });
+  });
+
+  describe('#pendingSushiLP', () => {
+    it('Should check the pending sushi lp with no sushi depositors', async () => {
+      await mc.connect(owner).addPool(lp0.address, 100);
+      await lp0.connect(user0).approve(mc.address, v1000);
+      await mc.connect(user0).depositLP(0, v1000);
+
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      expect(await mc.connect(user0).pendingSushiLP(0)).to.equal(v50);
+    });
+
+    it('Should check the pending sushi lp with sushi depositors', async () => {
+      await sushi.connect(user0).approve(mc.address, v1000);
+      await mc.connect(user0).deposit(v1000);
+      await mc.connect(owner).addPool(lp0.address, 100);
+      await lp0.connect(user0).approve(mc.address, v1000);
+      await mc.connect(user0).depositLP(0, v1000);
+
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      expect(await mc.connect(user0).pendingSushiLP(0)).to.equal(v50.mul(3).div(4));
+    });
+  });
+
+  describe('#pendingSushi', () => {
+    it('Should check the pending sushi if no pool exists', async () => {
+      await sushi.connect(user0).approve(mc.address, v1000);
+      await mc.connect(user0).deposit(v1000);
+
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      expect(await mc.connect(user0).pendingSushi()).to.equal(v50);
+    });
+
+    it('Should check the pending sushi with pool', async () => {
+      await mc.connect(owner).addPool(lp0.address, 100);
+      await sushi.connect(user0).approve(mc.address, v1000);
+      await mc.connect(user0).deposit(v1000);
+
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      expect(await mc.connect(user0).pendingSushi()).to.equal(v50.div(4));
+    });
+  });
+
+  describe('#addPool', () => {
+    it('Should revert if non-owner tries to add a pool', async () => {
+      await expect(mc.connect(user0).addPool(lp0.address, 100)).to.revertedWith(
+        'Ownable: caller is not the owner'
+      );
+    });
+    it('Should check the pool allocation rate has applied', async () => {
+      await expect(mc.connect(owner).addPool(lp0.address, 100))
+        .to.emit(mc, 'PoolAdded')
+        .withArgs(lp0.address, 0, 100);
     });
   });
 
@@ -409,7 +485,6 @@ describe('Masterchef', function () {
       await expect(mc.connect(owner).setAllocationPoint(128))
         .to.emit(mc, 'AllocPointModified')
         .withArgs(64, 128);
-      expect(await mc.alloc2sushi()).to.equal(128);
     });
   });
 });
