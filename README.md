@@ -2,7 +2,7 @@
 
 This project demonstrates a basic masterchef example.
 
-```shell
+```
 1. Create Sushi token which is mintable by master chef contract
 2. Create SushiLP token which has static supply.
 3. Create Master Chef contract
