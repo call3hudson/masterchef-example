@@ -473,6 +473,37 @@ describe('Masterchef', function () {
         .to.emit(mc, 'PoolAdded')
         .withArgs(lp0.address, 0, 100);
     });
+
+    it('Should check complex claim for both sushi stakers and lp stakers', async () => {
+      await sushi.connect(user2).approve(mc.address, v1000);
+      await mc.connect(user2).deposit(v1000);
+
+      await lp0.connect(user0).approve(mc.address, v1000);
+      await mc.connect(user0).depositLP(0, v1000);
+
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+
+      await lp1.connect(user1).approve(mc.address, v1000);
+      await mc.connect(owner).addPool(lp1.address, 50);
+      await mc.connect(user1).depositLP(1, v1000); // After 5 blocks...
+
+      // After 5 blocks...
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+      await ethers.provider.send('evm_mine', []);
+
+      await expect(mc.connect(user0).claimLP(0))
+        .to.emit(mc, 'LPClaimed')
+        .withArgs(user0.address, 0, v50.add(v25).mul(3).div(4));
+      expect(await sushi.balanceOf(user0.address)).to.equal(v10000.add(v50.add(v25).mul(3).div(4)));
+
+      await expect(mc.connect(user1).claimLP(1))
+        .to.emit(mc, 'LPClaimed')
+        .withArgs(user1.address, 1, v25.mul(3).div(4)); // Notice that another one passed.
+      expect(await sushi.balanceOf(user1.address)).to.equal(v10000.add(v25.mul(3).div(4)));
+    });
   });
 
   describe('#setAllocationPoint', () => {
