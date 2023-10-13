@@ -474,6 +474,7 @@ describe('Masterchef', function () {
         .withArgs(lp0.address, 0, 100);
     });
 
+    // We need to recheck the complex claim for the case of adding a pool
     it('Should check complex claim for both sushi stakers and lp stakers', async () => {
       await sushi.connect(user2).approve(mc.address, v1000);
       await mc.connect(user2).deposit(v1000);
