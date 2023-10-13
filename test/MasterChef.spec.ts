@@ -199,6 +199,11 @@ describe('Masterchef', function () {
 
       expect(await sushi.balanceOf(user0.address)).to.equal(v10000.add(v10.mul(2)));
     });
+
+    it('Should recheck the input value', async () => {
+      await expect(mc.withdraw(0)).to.revertedWith('Params: Input value must be greater than zero');
+      await expect(mc.withdraw(v1000)).to.revertedWith('Withdraw: Not enough Sushi');
+    });
   });
 
   describe('#withdrawLP', () => {
